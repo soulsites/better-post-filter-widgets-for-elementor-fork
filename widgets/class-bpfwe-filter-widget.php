@@ -5933,17 +5933,43 @@ class BPFWE_Filter_Widget extends \Elementor\Widget_Base {
 								}
 
 								if ( false === $results ) {
-									$results = $wpdb->get_col(
+									$raw_results = $wpdb->get_col(
 										$wpdb->prepare(
 											"SELECT DISTINCT meta_value
 											FROM {$wpdb->postmeta}
 											WHERE meta_key = %s
 											AND post_id IN (" . implode( ',', array_fill( 0, count( $post_ids ), '%d' ) ) . ")
-											AND meta_value REGEXP '^[0-9]+(\.[0-9]+)?\+?$'
-											ORDER BY CAST(meta_value AS DECIMAL(20,6)) ASC",
+											AND meta_value != ''",
 											array_merge( [ $meta_key ], $post_ids )
 										)
 									);
+
+									// Unserialize values ACF stores as arrays (checkbox, multi-select fields).
+									$results = [];
+									foreach ( $raw_results as $raw ) {
+										if ( is_serialized( $raw ) ) {
+											$unserialized = maybe_unserialize( $raw );
+											if ( is_array( $unserialized ) ) {
+												foreach ( $unserialized as $v ) {
+													$results[] = (string) $v;
+												}
+											}
+										} else {
+											$results[] = $raw;
+										}
+									}
+									$results = array_values( array_unique( $results ) );
+
+									// Keep only values with a meaningful numeric component.
+									$results = array_values( array_filter( $results, function( $v ) {
+										$num = floatval( $v );
+										return $num > 0 || trim( $v ) === '0';
+									} ) );
+
+									// Sort numerically (floatval handles "18+" → 18).
+									usort( $results, function( $a, $b ) {
+										return floatval( $a ) <=> floatval( $b );
+									} );
 
 									if ( ! $is_editor || ! $is_facetted ) {
 										wp_cache_set( $cache_key, $results, $cache_group, 12 * HOUR_IN_SECONDS );
@@ -5951,7 +5977,7 @@ class BPFWE_Filter_Widget extends \Elementor\Widget_Base {
 								}
 
 								// Detect if the highest raw value uses a '+' suffix (e.g. "18+").
-								$last_raw     = ! empty( $results ) ? end( $results ) : '';
+								$last_raw     = ! empty( $results ) ? end( (array) $results ) : '';
 								$max_has_plus = ( false !== strpos( (string) $last_raw, '+' ) );
 
 								$terms = array_filter( array_map( 'floatval', $results ) );
